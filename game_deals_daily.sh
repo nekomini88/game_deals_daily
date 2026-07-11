@@ -14,6 +14,6 @@ python3 generate_game_deals_daily.py
 text_file="files/${today}/游戏折扣日报_${today}.txt"
 
 echo "📺 发送 Telegram..."
-hermes send --to "telegram:-1004307078905" --file "$text_file" || echo "❌ Telegram 发送失败"
+/root/.local/bin/hermes send --to "telegram:-1004307078905" --file "$text_file" || echo "❌ Telegram 发送失败"
 
 echo "🎉 游戏折扣日报发送完成！"

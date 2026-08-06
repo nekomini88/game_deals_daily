@@ -38,8 +38,12 @@ def _iter_all_items(data):
 
 
 def get_free_games(data, limit=15):
-    """常驻免费游戏（final_price==0 且无折扣到期时间）。
-    覆盖 specials / 各类目，链接可直接打开。
+    """常驻免费游戏（final_price==0 且 original_price 有真实值 且无折扣到期时间）。
+
+    关键坑: featuredcategories 对 new_releases/coming_soon 未发售/刚发售新品
+    返回占位价格 original_price=None, final_price=0 —— 这类"无价格信息"的游戏
+    不是免费（实测多为 10-15% 折扣新品）。必须排除 original_price is None 的项。
+    真免费游戏(CS2/Dota2 is_free=True)不在此 API 中, 无需担心漏掉。
     """
     results = []
     seen = set()
@@ -48,14 +52,15 @@ def get_free_games(data, limit=15):
         if not app_id or app_id in seen:
             continue
         final = item.get("final_price", -1)
-        # 常驻免费: 0 元且无限时到期时间
-        if final == 0 and not item.get("discount_expiration"):
+        orig = item.get("original_price")
+        # 常驻免费: 0 元且无限时到期时间, 且原价字段有真实值(排除未定价占位)
+        if final == 0 and orig is not None and not item.get("discount_expiration"):
             seen.add(app_id)
             results.append({
                 "name": item.get("name", "Unknown"),
                 "id": app_id,
                 "url": f"https://store.steampowered.com/app/{app_id}",
-                "original_price": item.get("original_price", 0),
+                "original_price": orig,
                 "final_price": 0,
                 "discount_percent": 0,
                 "platform": "Steam 🆓常驻免费",

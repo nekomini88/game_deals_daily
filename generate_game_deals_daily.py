@@ -86,6 +86,8 @@ def build_message(epic_games, steam_limited, steam_free):
             lines.append(f" ● {g['name']}")
             if g.get("url"):
                 lines.append(f"   🔗 {g['url']}")
+            if g.get("discount_expiration"):
+                lines.append(f"   ⏰ 截止: {g['discount_expiration']}")
             lines.append("")
 
     if steam_free:
@@ -93,6 +95,8 @@ def build_message(epic_games, steam_limited, steam_free):
         lines.append("🆓 Steam 免费游戏 (常驻)")
         for g in steam_free[:8]:
             lines.append(f" ● {g['name']}")
+            if g.get("url"):
+                lines.append(f"   🔗 {g['url']}")
         lines.append("")
 
     if not has_content:

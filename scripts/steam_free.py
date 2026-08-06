@@ -1,97 +1,109 @@
 #!/usr/bin/env python3
-"""Steam 限免检测 — 检查 Steam 当前免费/限时免费游戏"""
+"""Steam 限免/免费检测 — 检查 Steam 当前免费/限时免费游戏（含链接推送）"""
 import json
+import logging
 import urllib.request
 import sys
 
 STEAM_URL = "https://store.steampowered.com/api/featuredcategories?cc=us&l=schinese"
+logger = logging.getLogger(__name__)
+
 
 def fetch_steam():
-    """Fetch Steam featured categories"""
+    """Fetch Steam featured categories (dict {key: {items:[...]}})."""
     try:
         req = urllib.request.Request(STEAM_URL, headers={
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
         })
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        print(f"ERROR: Steam API failed: {e}", file=sys.stderr)
+        logger.error("Steam API failed: %s", e)
         return {}
 
 
-def get_free_games(data):
-    """Extract free-to-play games from Steam data"""
+def _iter_all_items(data):
+    """统一遍历顶层所有分类下的 items 列表。
+    featuredcategories 顶层各分类都是 {id,name,items:[...]} 结构（dict items 键）。
+    """
+    for k, v in data.items():
+        if isinstance(v, dict) and isinstance(v.get("items"), list):
+            for item in v["items"]:
+                if isinstance(item, dict):
+                    yield item
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict):
+                    yield item
+
+
+def get_free_games(data, limit=15):
+    """常驻免费游戏（final_price==0 且无折扣到期时间）。
+    覆盖 specials / 各类目，链接可直接打开。
+    """
     results = []
     seen = set()
-    
-    # Check various categories that may contain free games
-    for key in ["items", "free_to_play"]:
-        items = data.get(key, [])
-        if not isinstance(items, list):
+    for item in _iter_all_items(data):
+        app_id = str(item.get("id", ""))
+        if not app_id or app_id in seen:
             continue
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            app_id = str(item.get("id", ""))
-            if app_id in seen or not app_id:
-                continue
+        final = item.get("final_price", -1)
+        # 常驻免费: 0 元且无限时到期时间
+        if final == 0 and not item.get("discount_expiration"):
             seen.add(app_id)
-            final_price = item.get("final_price", -1)
-            if final_price == 0:
-                results.append({
-                    "name": item.get("name", "Unknown"),
-                    "id": app_id,
-                    "url": f"https://store.steampowered.com/app/{app_id}",
-                    "original_price": item.get("original_price", 0),
-                    "final_price": 0,
-                    "discount_percent": 100 if item.get("original_price", 0) > 0 else 0,
-                    "platform": "Steam 🆓常驻免费"
-                })
-    
-    return results
+            results.append({
+                "name": item.get("name", "Unknown"),
+                "id": app_id,
+                "url": f"https://store.steampowered.com/app/{app_id}",
+                "original_price": item.get("original_price", 0),
+                "final_price": 0,
+                "discount_percent": 0,
+                "platform": "Steam 🆓常驻免费",
+            })
+    return results[:limit]
 
 
-def get_limted_time_free(data):
-    """Extract limited-time free games (100% discount on paid games)"""
+def get_limted_time_free(data, limit=10):
+    """限时免费游戏（discount_expiration 存在 即 100% off 且为限时）。
+    这类游戏的 final_price 为 0，但有 discount_expiration 到期时间 → 限时免费。
+    """
     results = []
     seen = set()
-    
-    for key in ["specials"]:
-        items = data.get(key, [])
-        if not isinstance(items, list):
+    for item in _iter_all_items(data):
+        app_id = str(item.get("id", ""))
+        if not app_id or app_id in seen:
             continue
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            app_id = str(item.get("id", ""))
-            if app_id in seen or not app_id:
-                continue
-            orig = item.get("original_price", 0) or 0
-            final = item.get("final_price", 0) or 0
-            disc = item.get("discount_percent", 0) or 0
-            # 100% off = limited time free
-            if (disc == 100) or (orig > 0 and final == 0):
-                seen.add(app_id)
-                results.append({
-                    "name": item.get("name", "Unknown"),
-                    "id": app_id,
-                    "url": f"https://store.steampowered.com/app/{app_id}",
-                    "original_price": orig,
-                    "final_price": 0,
-                    "discount_percent": 100,
-                    "platform": "Steam ⚡限时免费"
-                })
-    
-    return results
+        orig = item.get("original_price", 0) or 0
+        final = item.get("final_price", 0) or 0
+        disc = item.get("discount_percent", 0) or 0
+        exp = item.get("discount_expiration") or ""
+        # 限时免费: 100% off (final==0 & orig>0) 且存在到期时间（真限时而非常驻）
+        is_limited = (disc == 100 or (orig > 0 and final == 0)) and bool(exp)
+        if is_limited:
+            seen.add(app_id)
+            results.append({
+                "name": item.get("name", "Unknown"),
+                "id": app_id,
+                "url": f"https://store.steampowered.com/app/{app_id}",
+                "original_price": orig,
+                "final_price": 0,
+                "discount_percent": 100,
+                "discount_expiration": exp,
+                "platform": "Steam ⚡限时免费",
+            })
+    return results[:limit]
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     data = fetch_steam()
     free = get_free_games(data)
     limited = get_limted_time_free(data)
-    all_games = limited + free
-    
-    if not all_games:
+    print("=== 限时免费 ===")
+    for g in limited:
+        print(f"  ⚡ {g['name']} | {g['url']} | 到期 {g['discount_expiration']}")
+    print("=== 常驻免费 ===")
+    for g in free:
+        print(f"  🆓 {g['name']} | {g['url']}")
+    if not free and not limited:
         print("NO_FREE_GAMES")
-    else:
-        print(json.dumps(all_games, ensure_ascii=False, indent=2))
